@@ -264,3 +264,5 @@ def flash_attn_with_kvcache(q, k_cache, v_cache, k=None, v=None, cache_seqlens=N
     # 然后再计算注意力。这个计算好的注意力，在神经网络中，继续沿着module层往下走，用来计算logits。
     y_sdpa = _sdpa_attention(q_sdpa, k_sdpa, v_sdpa, window_size, enable_gqa)
 ```
+
+关于 kv cache 头数为什么比 Q 少，见 [GQA](GroupQueryAttention.md)
