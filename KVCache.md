@@ -1,6 +1,6 @@
 # KV cache
 
-大模型在推理阶段，做注意力计算时，我们可以将公式中的 $K/V$ 数据缓存起来，提高计算效率。训练阶段不需要 $K/V$ 缓存。
+大模型在推理阶段，做注意力计算时，我们将公式中的 $K/V$ 数据缓存起来，提高计算效率。训练阶段不需要 $K/V$ 缓存。
 
 ## 推理为什么要 KV cache
 
@@ -28,7 +28,7 @@ $$
 
 这里假定只生成一条回答，不考虑并发。
 
-单条生成时 `num_samples=1`；多条采样只是把同一份 prompt cache 复制多份，每步仍然 `T=1`
+单条生成时 `num_samples=1`；多条采样只是把同一份 prompt cache 复制多份，每步仍然 `T=1`。也就是每次只生成一个token。
 
 * **循环1**：用Prefill 阶段 `34` 的logits 采出 `178`，并加入生成结果 → 序列是 `[12, 34, 178]`。再 $forward(178)$，在forward内先追加 `178` 的 $K/V$, $cache = [12, 34, 178]$，然后得到最后一位 `178` 的logits。
 
@@ -39,7 +39,7 @@ Decode 小结：
 - **Engine 循环**：先采样并写入生成序列，再 forward 这个 token。
 - 一次 forward 内部：先追加这个 token 的 $K/V$，再产出它的 logits。
 
-这里Decode的流程严格按照 `nanochat/engine.py` 中推理引擎的实现方式整理的。具体详情见下文 **推理代码调用路径** 的第3，4，5节。
+这里的推理流程严格按照 `nanochat/engine.py` 中推理引擎的实现方式整理的。具体详情见下文 **推理代码调用路径** 的第3，4，5节。
 
 ## 训练为什么不要 KV cache
 
@@ -82,6 +82,14 @@ if __name__ == "__main__":
     stream = engine.generate(prompt_tokens, num_samples=1, **kwargs)
     print(f"Match: {reference_ids == generated_tokens}")
 ```
+
+## Q 为什么不需要缓存
+
+训练和推理里，$Q$ 都是由当前这次 前向传播（`forward`）的 token 算出来、用完即弃。
+
+Decode 下一步会换一个新 token，它的 $Q$ 必须重算，和上一拍的 $Q$ 没有复用关系。当前这拍的 $Q$ 却要和已经出现过的所有 token 的 $K/V$ 做注意力，所以要缓存的是 $KV$，不是 $Q$。
+
+Prefill 时 prompt 每个位置也会算 $Q$，但只在这一次 `forward` 里用；Decode 不会再拿这些 $Q$ 出来，故也不存。
 
 ## 推理引擎 Engine
 
