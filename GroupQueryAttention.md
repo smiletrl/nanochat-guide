@@ -145,7 +145,7 @@ class Engine:
         )
 ```
 
-*注意：这里的 head_dim 依然是 m.n_embd // m.n_head；GQA 降低的是 KV 头的数量，但单个注意力头的维度大小必须与 Q 保持一致，否则点积 $QK^T$ 会因维度不匹配而报错。* 
+注意：这里的 head_dim 依然是 m.n_embd // m.n_head；GQA 降低的是 KV 头的数量，但单个注意力头的维度大小必须与 Q 保持一致，否则点积 $QK^T$ 会因维度不匹配而报错。
 
 上面 10/5 的例子里，KV cache 体积和带宽相对 MHA 大约减半。nanochat 这种小模型对 decode cache 不敏感，所以默认关着；长 decode 的大模型才更需要它。
 
