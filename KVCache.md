@@ -60,9 +60,9 @@ logits = self.model.forward(ids, kv_cache=kv_cache_decode)[:, -1, :]
 
 此处 `self.model.forward()`，同样对应了 class GPT 的 forward 方法。传递的参数对应了 `idx, kv_cache`。而 `targets`为None。
 
-训练过程的一次调用是完整的一次 batch 以及 sequence 的自注意力计算。不同调用之间的token是独立的。比如sequence token的length是128K，甚至1M，那这一次前向forward的计算，就会把这个batch里每个sequence的注意力计算全部完成。跟下一次前向计算的token之间就没有关系了。
+训练过程的一次`forward`调用是完整的一次 batch 以及 sequence 的自注意力计算。不同调用之间的token是独立的。比如sequence token的length是128K，甚至1M，那这一次前向forward的计算，就会把这个batch里每个sequence的注意力计算全部完成。跟下一次前向计算的token之间就没有关系了。
 
-推理过程的一次调用，则不同。在 Prefill 阶段，推理的一次调用，batch 固定为1，sequence 的length 为 prompt token的长度 > 1。 而在Decode阶段，batch可能 > 1 (并发采样)，但是每个 sequence 的 length 固定为 1，因为每次只预测下一个token。这就意味着，第 (N) 次 Decode 要看见 Prefill 以及前 N−1次 Decode 写入的 (KV)。那前面的Prefill 以及前 N-1 次的 $KV$ 都需要保存在显存中。
+推理过程的一次`forward`调用，则不同。在 Prefill 阶段，推理的一次调用，batch 固定为1，sequence 的length 为 prompt token的长度 > 1。 而在Decode阶段，batch可能 > 1 (并发采样)，但是每个 sequence 的 length 固定为 1，因为每次只预测下一个token。这就意味着，第 (N) 次 Decode 要看见 Prefill 以及前 N−1次 Decode 写入的 (KV)。那前面的Prefill 以及前 N-1 次的 $KV$ 都需要保存在显存中。
 
 3. 不要跟 `nanochat/gpt.py` 模型中的 `generate()` 方法混淆：
 
