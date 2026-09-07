@@ -125,9 +125,6 @@ def flash_attn_func(q, k, v, causal=False, window_size=(-1, -1)):
 ```python
 class KVCache:
     def __init__(self, batch_size, num_heads, seq_len, head_dim, num_layers, device, dtype):
-        self.batch_size = batch_size
-        self.max_seq_len = seq_len
-        self.n_layers = num_layers
         self.n_heads = num_heads
         self.head_dim = head_dim
         # Pre-allocate cache tensors: (n_layers, B, T, H, D)
