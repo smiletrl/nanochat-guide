@@ -1,8 +1,8 @@
-# GQA Grouped-Query Attention
+# 分组查询注意力 GQA
 
-GQA 的全称 Grouped-Query Attention（分组查询注意力）。
+![分组注意力](./assets/gqa.png)
 
-它是介于 MHA（Multi-Head Attention）和 MQA（Multi-Query Attention）之间的一种折中方案：
+GQA 的全称 Grouped-Query Attention。它是介于 MHA（Multi-Head Attention）和 MQA（Multi-Query Attention）之间的一种折中方案：
 
 - MHA（标准多头注意力）：每个 Query head 对应独立的 Key/Value head（例如 10 个 Q 对应 10 个 KV，比例 1:1）。
 
@@ -10,7 +10,9 @@ GQA 的全称 Grouped-Query Attention（分组查询注意力）。
 
 - GQA（分组查询注意力）：把 Query heads 分组，同一组共享一个 KV head（例如 10 个 Q 分成 5 组，每 2 个 Q 共享 1 个 KV，比例 2:1）。
 
-GQA 在几乎不损失模型表现的前提下，大幅削减 Decode 阶段 [KV Cache](KVCache.md) 的显存和访存带宽，是 Llama 2/3、Mistral 等开源大模型的常见配置。
+GQA 在几乎不损失模型表现的前提下，大幅削减 Decode 阶段 [KV Cache](KVCache.md) 的显存和访存带宽，是 Qwen 等开源大模型的常见配置。
+
+
 
 ## 代码微调
 
@@ -116,7 +118,7 @@ def flash_attn_func(q, k, v, causal=False, window_size=(-1, -1)):
     if USE_FA3:
         return _fa3.flash_attn_func(q, k, v, causal=causal, window_size=window_size)
 ```
-这两个分支， q, k/v 的形状，q 的 head 数量，按照上面演示的数据，都是 k/v head 数量的两倍。Pytorch 跟 FlashAttentionV3 内部都可以自动执行分组查询注意力GQA。
+这两个分支，q 的 head 数量，按照上面演示的数据，都是 k/v head 数量的两倍。Pytorch 跟 FlashAttentionV3 内部都可以自动执行分组查询注意力GQA。
 
 训练和推理的投影逻辑相同。推理时 kv cache 按 n_kv_head 分配，不按 n_head：
 
