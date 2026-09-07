@@ -10,7 +10,7 @@ GQA 的全称 Grouped-Query Attention（分组查询注意力）。
 
 - GQA（分组查询注意力）：把 Query heads 分组，同一组共享一个 KV head（例如 10 个 Q 分成 5 组，每 2 个 Q 共享 1 个 KV，比例 2:1）。
 
-GQA 在几乎不损失模型表现的前提下，大幅削减 Decode 阶段 KV Cache 的显存和访存带宽，是 Llama 2/3、Mistral 等开源大模型的常见配置。
+GQA 在几乎不损失模型表现的前提下，大幅削减 Decode 阶段 [KV Cache](KVCache.md) 的显存和访存带宽，是 Llama 2/3、Mistral 等开源大模型的常见配置。
 
 ## 代码微调
 
