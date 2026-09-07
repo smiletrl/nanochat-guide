@@ -46,7 +46,7 @@
 | 9 | 评测 | ⏳ | `scripts/base_eval.py`，`scripts/chat_eval.py`，`nanochat/core_eval.py`，`tasks/` |
 | **第 4 阶** | **推理引擎与极致效率 (Inference & Systems)**| | |
 | 10| [KV Cache 与推理引擎](KVCache.md) | ✅ | `nanochat/engine.py`，`nanochat/gpt.py` |
-| 11| [FlashAttention](FlashAttention.md) | 🚧 | `nanochat/flash_attention.py` |
+| 11| [FlashAttention V3](FlashAttentionV3.md) | ✅ | `nanochat/flash_attention.py` |
 | 12| 对话入口 | ⏳ | `scripts/chat_cli.py` |
 
 ## 上游
