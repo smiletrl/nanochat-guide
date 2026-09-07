@@ -1,8 +1,8 @@
 # 分组查询注意力 GQA
 
-![分组注意力](./assets/gqa.png)
-
 GQA 的全称 Grouped-Query Attention。它是介于 MHA（Multi-Head Attention）和 MQA（Multi-Query Attention）之间的一种折中方案：
+
+![分组注意力](./assets/gqa.png)
 
 - MHA（标准多头注意力）：每个 Query head 对应独立的 Key/Value head（例如 10 个 Q 对应 10 个 KV，比例 1:1）。
 
