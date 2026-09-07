@@ -105,7 +105,7 @@ class CausalSelfAttention(nn.Module):
         v = self.c_v(x).view(B, T, self.n_kv_head, self.head_dim)  # (B, T, 5, 128)
 ```
 
-最终计算注意力机制时 `nanochat/flash_attention.py` 中的两个分支如下：
+最终计算注意力机制 `nanochat/flash_attention.py` 中的两个分支如下：
 
 ```python
 # sdpa 分支
@@ -118,9 +118,10 @@ def flash_attn_func(q, k, v, causal=False, window_size=(-1, -1)):
     if USE_FA3:
         return _fa3.flash_attn_func(q, k, v, causal=causal, window_size=window_size)
 ```
+
 这两个分支，q 的 head 数量，按照上面演示的数据，都是 k/v head 数量的两倍。Pytorch 跟 FlashAttentionV3 内部都可以自动执行分组查询注意力GQA。
 
-训练和推理的投影逻辑相同。推理时 kv cache 按 n_kv_head 分配，不按 n_head：
+`nanochat/engine.py` 推理引擎 kv cache 按 n_kv_head 分配，不按 n_head：
 
 ```python
 class KVCache:
