@@ -49,12 +49,6 @@
 | 11| [FlashAttention](FlashAttention.md) | 🚧 | `nanochat/flash_attention.py` |
 | 12| 对话入口 | ⏳ | `scripts/chat_cli.py` |
 
-## 进度
-
-进行中。已完成 RoPE、KV Cache、FP8；FlashAttention 为草稿。
-
-每章固定四块：问题是什么、最小直觉、nanochat 里对应哪几行、工业系统通常还会多什么。最后一块目前可能很短。
-
 ## 上游
 
 - 代码：[karpathy/nanochat](https://github.com/karpathy/nanochat)
