@@ -1,6 +1,6 @@
 # 旋转位置编码
 
-旋转位置编码取代Google 2017《Attention Is All You Need》论文中的绝对位置编码，采用相对位置的编码方式，是当前大模型训练的位置编码的常见训练方式。
+旋转位置编码（Rotary Position Embedding）取代Google 2017《Attention Is All You Need》论文中的绝对位置编码，采用相对位置的编码方式，是当前大模型训练的位置编码的常见训练方式。
 
 ## 前置几何基础： 在二维平面上旋转一个点
 

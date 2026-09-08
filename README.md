@@ -35,7 +35,7 @@
 | 1 | Tokenizer | ⏳ | `scripts/tok_train.py`，`scripts/tok_eval.py`，`nanochat/tokenizer.py` |
 | 2 | 模型结构 | ⏳ | `nanochat/gpt.py` |
 | 2.1 | [分组查询注意力 GQA](GroupQueryAttention.md) | ✅ | `nanochat/gpt.py` ， `scripts/base_train.py` |
-| 3 | [旋转位置编码 RoPE](RotaryEmbedding.md) | ✅ | `nanochat/gpt.py` |
+| 3 | [旋转位置编码 RoPE](RotaryPositionEmbedding.md) | ✅ | `nanochat/gpt.py` |
 | **第 2 阶** | **训练流水线 (Training)** | | |
 | 4 | [预训练参数与训练步数计算](BaseTrainParameter.md) | 🚧 | `scripts/base_train.py` |
 | 5 | 优化器、常规精度与 checkpoint | ⏳ | `nanochat/optim.py`，`nanochat/common.py`，`nanochat/checkpoint_manager.py` |
