@@ -113,8 +113,6 @@ if args.fp8:
 
 ```python
 def fp8_module_filter(mod: nn.Module, fqn: str) -> bool:
-    if not isinstance(mod, nn.Linear):
-        return False
     # fp8 要求线性层的输入维度跟输出维度是16的倍数
     if mod.in_features % 16 != 0 or mod.out_features % 16 != 0:
         return False
@@ -130,7 +128,6 @@ def fp8_module_filter(mod: nn.Module, fqn: str) -> bool:
 def convert_to_float8_training(module, *, config=None, module_filter_fn=None):
     """递归性地将满足条件的 nn.Linear 线性层替成自定义的 Float8Linear 层.
     """
-    ...
 ```
 
 4. **自定义fp8线性层**
