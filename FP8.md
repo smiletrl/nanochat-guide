@@ -146,9 +146,7 @@ $$
 X_{scaled} = X \times 74.6667 = \begin{bmatrix}
 1.0 \times 74.6667 & -2.0 \times 74.6667 \\
 3.0 \times 74.6667 & -6.0 \times 74.6667
-\end{bmatrix}
-=
-\begin{bmatrix}
+\end{bmatrix} = \begin{bmatrix}
 74.67 & -149.33 \\
 224.0 & -448.0
 \end{bmatrix}
