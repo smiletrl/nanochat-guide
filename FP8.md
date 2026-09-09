@@ -1,12 +1,30 @@
 # FP8
 
-FP8是在一种在神经网络线性层（Linear Layer）内，进行矩阵运算时，对数据进行量化quantize的一种技术。该技术使用专属的FP8硬件单元，加速矩阵运算。相对于BF16，算力提升近一倍。
+FP8是在一种在大模型线性层（Linear Layer）内，进行矩阵运算时，对数据进行量化quantize的一种技术。计算时将浮点数从16位转为8位，使用FP8硬件单元（CUDA设备， H100或更新架构），加速大矩阵运算。相对于BF16浮点数，算力提升近一倍。
 
-数据从原始的FP32/BF16被（有损）压缩到8位，进行计算。计算完成后，得到的weights/Biase，再根据缩放比例，复原到原来数据的32/16位数后保存。
+## 实现流程
 
-这种量化quantize策略，对模型训练影响不是很大。因为深度学习本来也是一种统计概率科学，缩减精度有点像某种数据正则化。但是可以极大提高显存使用率，提升数据传输速率跟训练速度。
+大模型内部的FP8实现，依赖硬件支持，自定义线性层，手动执行张量矩阵的量化。
 
-## 检测系统环境是否支持
+1. **开启训练**
+
+执行如下命令。附带参数 `--fp8`，启用fp8。
+
+```bash
+python -m scripts.base_train \
+  --max-seq-len=512 \
+  --device-batch-size=4 \
+  --eval-tokens=512 \
+  --core-metric-every=-1 \
+  --total-batch-size=2048 \
+  --num-iterations=1 \
+  --eval-every=-1 
+  --fp8
+```
+
+可选参数 `--fp8-recipe`，默认值 `tensorwise`, 也可以传 `rowwise`。但是实际上代码内部仅支持 `tensorwise`。见 `nanochat/fp8.py` 的 `class Float8LinearConfig`.
+
+2. **检测系统环境是否支持**
 
 `scripts/base_train.py` 检测是否启用
 
@@ -18,18 +36,28 @@ if args.fp8:
         # 启用fp8
 ```
 
-代码中没有做硬件的强检测。启动命令 `python -m scripts.base_train` 传递的参数 `--fp8` 是否启用, 以及当前环境是否是 `cuda`。实际上最好是检测下硬件的版本。因为 cuda 从第4代tensor cores（H100）开始支持 fp8。
+代码中检测硬件环境是否 `cuda`。实际上最好是检测下硬件的版本。因为 cuda 从第4代tensor cores（H100）开始支持 fp8。如果当前cuda版本低于H100，fp8 是不支持的。
 
-不是所有的线性层都应该替换。fp8 要求线性层的输入维度跟输出维度是16的倍数，且这两个维度各自不能低于128。如果维度低于128，矩阵的量化损失可能干扰结果，而且性能提升也不明显。
+3。 **替换特定的线性层**
 
-## FP8实现流程
+`scripts/base_train.py` 中定义了替换条件
 
+```python
+def fp8_module_filter(mod: nn.Module, fqn: str) -> bool:
+    if not isinstance(mod, nn.Linear):
+        return False
+    # fp8 要求线性层的输入维度跟输出维度是16的倍数
+    if mod.in_features % 16 != 0 or mod.out_features % 16 != 0:
+        return False
+    # 这两个维度各自不能低于128。
+    if min(mod.in_features, mod.out_features) < 128:
+        return False
+    return True
+```
 
-### 替换模型内部满足条件的线性层
+不是所有的线性层都应该替换。条件不满足的话，矩阵的量化会干扰结果，性能没有提升。
 
-启动命令 `python -m scripts.base_train` 后，`scripts/base_train.py` 在满足系统环境后，调用函数 `def convert_to_float8_training()`。
-
-`nanochat/fp8.py` ，在模型被初始化到内存以后，通过扫描model的子树，从树的叶子节点开始，依次往上搜索，将linear层，替换为FP8的linear层。
+`nanochat/fp8.py` 执行线性层替换。 通过扫描大模型的模块树，从树的叶子节点开始，依次往上搜索，将linear层，替换为FP8的linear层。
 
 ```python
 def convert_to_float8_training(module, *, config=None, module_filter_fn=None):
@@ -38,20 +66,17 @@ def convert_to_float8_training(module, *, config=None, module_filter_fn=None):
     def _convert(mod, prefix=""):
         for name, child in mod.named_children():
             fqn = f"{prefix}.{name}" if prefix else name
+            # 执行递归逻辑
             _convert(child, fqn)
             if isinstance(child, nn.Linear) and not isinstance(child, Float8Linear):
                 if module_filter_fn is None or module_filter_fn(child, fqn):
+                    # 执行线性层的替换
                     setattr(mod, name, Float8Linear.from_float(child))
-
-    _convert(module)
-    return module
 ```
 
-### 自定义fp8 线性层
+4. **自定义fp8线性层**
 
-`nanochat/fp8.py` 中的实现。
-
-- 自定义的FP8的线性层 `Float8Linear` 拓展pytorch里的nn.Linear 层，重写前向传播forward跟反向传播backward 方法。
+`nanochat/fp8.py` 中自定义FP8的线性层 `Float8Linear`， 拓展 pytorch `nn.Linear` 层，重写前向传播 forward、反向传播 backward 方法。
 
 ```python
 class Float8Linear(nn.Linear):
@@ -59,89 +84,103 @@ class Float8Linear(nn.Linear):
         output = _Float8Matmul.apply(input_2d, self.weight)
 ```
 
-- 前向传播跟后向传播用的fp8的精度不同，前向需要更高的精度，是 `torch.float8_e4m3fn`, 而反向传播对于梯度，需要更大的范围，是`torch.float8_e5m2`.
+- 前向/反向传播的fp8的精度不同
 
 ```python
 @torch._dynamo.allow_in_graph
 class _Float8Matmul(torch.autograd.Function):
     @staticmethod
     def forward(ctx, input_2d, weight):
-        # 需要更高的精度
+        # 前向传播需要更高的精度 torch.float8_e4m3fn
         input_fp8, input_inv = _to_fp8(input_2d, torch.float8_e4m3fn)
         weight_fp8, weight_inv = _to_fp8(weight, torch.float8_e4m3fn)
     
     @staticmethod
     def backward(ctx, grad_output):
-        # 需要更大的数据范围
+        # 反向传播需要更大的数据范围 torch.float8_e5m2
         go_fp8, go_inv = _to_fp8(grad_output, torch.float8_e5m2)
 ```
 
+- 量化步骤（带具体矩阵示例）
 
-- 在进行庞大的GEMM运算之前，先找到整个矩阵中最大的值，然后将float8的最大值除以矩阵的最大值，得到缩放比例scale。然后对矩阵元素乘以缩放比例，使得矩阵元素都被压缩到float8的表示范围内。
+FP8 量化的核心是将高精度（如 FP32/BF16）矩阵中的元素，通过缩放映射到低精度的 FP8 表示范围内（float8_e4m3fn 范围为 [-448, 448]）。以下以 nanochat/fp8.py 中的 _to_fp8 函数逻辑为例，演示矩阵的数值变化过程。
 
-`nanochat/fp8.py`， 数据缩放
+`nanochat/fp8.py` 数据缩放:
 
 ```python
 @torch.no_grad()
 def _to_fp8(x, fp8_dtype):
-    fp8_max = torch.finfo(fp8_dtype).max
-    # 找到张量中绝对值最大的数字
-    amax = x.float().abs().max()
-    # 得到缩放比例
-    scale = fp8_max / amax.double().clamp(min=EPS)
+    fp8_max = torch.finfo(fp8_dtype).max          # e4m3fn 最大值为 448
+    amax = x.float().abs().max()                  # 找出矩阵绝对值的最大值
+    scale = fp8_max / amax.double().clamp(min=EPS) # 计算缩放因子
     scale = scale.float()
-    # 量化Quantize，得到（有损）压缩的值
-    x_scaled = x.float() * scale
-    x_clamped = x_scaled.clamp(-fp8_max, fp8_max)
-    x_fp8 = x_clamped.to(fp8_dtype)
-    # _scaled_mm 计算要求的缩放比例格式
-    inv_scale = scale.reciprocal()
+    x_scaled = x.float() * scale                  # 放大矩阵元素
+    x_clamped = x_scaled.clamp(-fp8_max, fp8_max) # 截断越界值
+    x_fp8 = x_clamped.to(fp8_dtype)               # 转换为 FP8（发生四舍五入/有损压缩）
+    inv_scale = scale.reciprocal()                # 保存逆缩放因子，用于后续矩阵乘法的还原
     return x_fp8, inv_scale
 ```
 
-- 计算使用`torch._scale_mm()`, 在前向跟反向传播的计算过程中，第一个参数要求数据内存是行连续（row-major），而第二个参数要求内存是列连续（col-major）. 在反向传播的计算过程中，这里用到张量tensor的转置 `.t()`，重写分配连续内存`contiguous()`两个方法。
+#### 矩阵量化数值演示
 
-示例在Linear线性层反向传播时，
+假设我们有一个待量化的 2×2 矩阵 **X**（存储为 FP32）：
 
-```python
-@torch._dynamo.allow_in_graph
-class _Float8Matmul(torch.autograd.Function):
-    @staticmethod
-    def backward(ctx, grad_output):
-        in_fp8, in_inv, w_fp8, w_inv = ctx.saved_tensors
+$$
+X = \begin{bmatrix}
+1.0 & -2.0 \\
+3.0 & -6.0
+\end{bmatrix}
+$$
 
-        # === 矩阵乘法 1: grad_input = grad_output @ weight ===
-        # Shapes: [B, N] @ [N, K] -> [B, K]
-        # 梯度使用 e5m2 (更大区间), 权重使用 e4m3 (更高精度)
-        go_fp8, go_inv = _to_fp8(grad_output, torch.float8_e5m2)
-        # go_fp8  [B, N] 在内存中是行连续, 适配_scaled_mm()的第一个参数要求
-        # w_fp8 [N, K] 在内存中是行连续，需要转为列连续的方式，适配_scaled_mm()的第二个参数要求
-        w_col = _to_col_major(w_fp8)
-        grad_input = torch._scaled_mm(
-            go_fp8,
-            w_col,
-            scale_a=go_inv,
-            scale_b=w_inv,
-            out_dtype=grad_output.dtype,
-            use_fast_accum=False,
-        )
+**步骤 1：寻找绝对最大值**
+矩阵中绝对值最大的元素为 `-6.0`，即 `amax = 6.0`。
 
-        # === 矩阵乘法 2: grad_weight = grad_output.T @ input ===
-        # Shapes: [N, B] @ [B, K] -> [N, K]
-        # go_fp8 [B, N] 在内存中是行连续， go.T = [N, B] 转置后，就变成了列连续，需要加contiguous()，在内存中重新分配，变为行连续，适配_scaled_mm()的第一个参数要求。
-        go_T = go_fp8.t().contiguous()  # [N, B] row-major 行连续
-        in_col = _to_col_major(in_fp8)    # [B, K] column-major 列连续
-        grad_weight = torch._scaled_mm(
-            go_T,
-            in_col,
-            scale_a=go_inv,
-            scale_b=in_inv,
-            out_dtype=grad_output.dtype,
-            use_fast_accum=False,
-        )
+**步骤 2：计算缩放因子**
+`float8_e4m3fn` 的表示上限为 `fp8_max = 448`。
+缩放因子 `scale = 448 / 6.0 ≈ 74.6667`。
 
-        return grad_input, grad_weight
-```
+**步骤 3：矩阵缩放（FP32 精度下计算）**
+将原矩阵所有元素乘以缩放因子，使其尽量填满 FP8 的表示范围：
+
+$$
+X_{scaled} = X \times 74.6667 = \begin{bmatrix}
+1.0 \times 74.6667 & -2.0 \times 74.6667 \\
+3.0 \times 74.6667 & -6.0 \times 74.6667
+\end{bmatrix}
+=
+\begin{bmatrix}
+74.67 & -149.33 \\
+224.0 & -448.0
+\end{bmatrix}
+$$
+
+**步骤 4：截断与量化（转换为 FP8）**
+将缩放后的值限制在 `[-448, 448]` 区间，并转换为 FP8 格式（`float8_e4m3fn`）。该过程会触发“舍入到最近偶数”的硬件级四舍五入，引入精度损失。
+
+量化后的矩阵 **X_fp8**（以离散数值表示）为：
+
+$$
+X_{fp8} \approx \begin{bmatrix}
+74.67 & -149.33 \\
+224.0 & -448.0
+\end{bmatrix}
+$$
+
+（注：实际硬件中 `74.67` 和 `-149.33` 会被舍入到 FP8 格式下最接近的离散网格点，例如 `74.67` 可能变为 `76.0` 或 `72.0`，取决于具体的步长，此处为了清晰展示缩放原理，保留了数学上的中间值。）
+
+**步骤 5：保存逆缩放因子**
+供 `torch._scaled_mm` 在矩阵乘法后还原数值幅度：
+
+$$
+inv\_scale = \frac{1}{74.6667} \approx 0.01339
+$$
+
+#### 关键观察
+- **最大值对齐**：原始矩阵中绝对值最大的 `-6.0` 被精准映射到了 FP8 的边界 `-448`，从而**最大化利用了 FP8 的动态范围**。
+- **有损压缩**：原本连续的浮点数（如 `74.6667`）被强制转换，只能近似为 FP8 网格上的离散点，这是精度损失的主要来源。
+- **反向传播差异**：注意在反向传播中，代码使用了 `float8_e5m2`（范围更大但精度更低）来量化梯度 `grad_output`，以适应梯度可能出现的较大数值波动。
+
+- 计算使用 `torch._scale_mm()`, 在前向/反向传播的计算过程中，第一个参数要求数据内存是行连续（row-major），而第二个参数要求内存是列连续（col-major）. 在反向传播的计算过程中，这里用到张量tensor的转置 `.t()`，重写分配连续内存`contiguous()`两个方法。
 
 ## References
 
