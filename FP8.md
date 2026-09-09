@@ -80,12 +80,6 @@ $$
 ```bash
 python -m scripts.base_train \
   --max-seq-len=512 \
-  --device-batch-size=4 \
-  --eval-tokens=512 \
-  --core-metric-every=-1 \
-  --total-batch-size=2048 \
-  --num-iterations=1 \
-  --eval-every=-1 
   --fp8
 ```
 
