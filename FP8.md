@@ -1,6 +1,8 @@
 # FP8
 
-FP8是在一种在大模型线性层（Linear Layer）内，进行矩阵运算时，对数据进行量化quantize的一种技术。将浮点数从16位转为8位，使用FP8硬件单元（CUDA设备， H100或更新架构），加速大矩阵运算。相对于BF16浮点数，**算力提升近一倍**。
+FP8 是在大模型线性层（Linear）的矩阵乘法里，把激活和权重从 16 位量化到 8 位的技术。计算走 H100 及更新架构上的 FP8 Tensor Core，相对 BF16，**矩阵乘吞吐大约翻倍**。
+
+nanochat 的实现是 **tensorwise 动态缩放**：整张矩阵共用一个 scale，量化后交给 `torch._scaled_mm`。
 
 ## 矩阵量化数值演示
 
@@ -65,11 +67,11 @@ $$
   
   - **`rowwise`（更通用）**：针对矩阵的 *每一行* 独立计算 `amax` 和缩放因子（即 `amax = x.abs().max(dim=-1, keepdim=True)`）。这使得每一行都能独立地最大化利用 FP8 的 `[-448, 448]` 动态范围，对异常值有极强的鲁棒性，从而获得更低的量化误差和更稳定的训练收敛性。
   
-  不过，`rowwise` 的计算模式需要启动更多的 CUDA 内核来处理逐行缩放，吞吐量会略低于 `tensorwise`。nanochat 保留了这两种选择，允许用户在**速度（tensorwise）**与**精度/稳定性（rowwise）**之间根据硬件（H100+）情况进行权衡。
+  不过，`rowwise` 的计算模式需要启动更多的 CUDA 内核来处理逐行缩放，吞吐量会略低于 `tensorwise`。nanochat 保留了这两种选择，允许用户在 **速度 (tensorwise)** 与 **精度 (rowwise)** 之间根据硬件（H100+）情况进行权衡。
 
 ## fp8实现流程
 
-大模型内部的FP8实现，依赖硬件支持，自定义线性层，手动执行张量矩阵的量化。
+依赖 CUDA FP8 硬件、把符合条件的 `nn.Linear` 换成 `Float8Linear`，在 `forward / backward` 里手动量化后再做 `_scaled_mm`。
 
 1. **开启训练**
 
@@ -105,7 +107,9 @@ if args.fp8:
 
 3。 **替换特定的线性层**
 
-`scripts/base_train.py` 中定义了替换条件
+不是所有 `nn.Linear` 都换。维度不是 16 的倍数、或 `min(in, out) < 128` 时，量化容易伤精度，也吃不到 kernel 优势。
+
+`scripts/base_train.py` 中定义了替换条件：
 
 ```python
 def fp8_module_filter(mod: nn.Module, fqn: str) -> bool:
@@ -120,36 +124,18 @@ def fp8_module_filter(mod: nn.Module, fqn: str) -> bool:
     return True
 ```
 
-不是所有的线性层都应该替换。条件不满足的话，矩阵的量化会干扰结果，性能没有提升。
-
 `nanochat/fp8.py` 执行线性层替换。 通过扫描大模型的模块树，从树的叶子节点开始，依次往上搜索，将linear层，替换为FP8的linear层。
 
 ```python
 def convert_to_float8_training(module, *, config=None, module_filter_fn=None):
     """递归性地将满足条件的 nn.Linear 线性层替成自定义的 Float8Linear 层.
     """
-    def _convert(mod, prefix=""):
-        for name, child in mod.named_children():
-            fqn = f"{prefix}.{name}" if prefix else name
-            # 执行递归逻辑
-            _convert(child, fqn)
-            if isinstance(child, nn.Linear) and not isinstance(child, Float8Linear):
-                if module_filter_fn is None or module_filter_fn(child, fqn):
-                    # 执行线性层的替换
-                    setattr(mod, name, Float8Linear.from_float(child))
+    ...
 ```
 
 4. **自定义fp8线性层**
 
-`nanochat/fp8.py` 中自定义FP8的线性层 `Float8Linear`， 拓展 pytorch `nn.Linear` 层，重写前向传播 forward、反向传播 backward 方法。
-
-```python
-class Float8Linear(nn.Linear):
-    def forward(self, input):
-        output = _Float8Matmul.apply(input_2d, self.weight)
-```
-
-- 前向/反向传播的fp8的精度不同
+`nanochat/fp8.py`，`Float8Linear` 继承 `nn.Linear`，`matmul` 交给 `_Float8Matmul`。前向用 `e4m3`，反向梯度用 `e5m2`，对应上面的演示：
 
 ```python
 @torch._dynamo.allow_in_graph
@@ -166,11 +152,8 @@ class _Float8Matmul(torch.autograd.Function):
         go_fp8, go_inv = _to_fp8(grad_output, torch.float8_e5m2)
 ```
 
-- 量化步骤（匹配文档初始的矩阵示例）
+`_to_fp8` 就是演示里的步骤 1–5：
 
-FP8 量化的核心是将高精度（如 FP32/BF16）矩阵中的元素，通过缩放映射到低精度的 FP8 表示范围内（float8_e4m3fn 范围为 [-448, 448]）。以下以 nanochat/fp8.py 中的 _to_fp8 函数逻辑为例，演示矩阵的数值变化过程。
-
-`nanochat/fp8.py` 数据缩放:
 
 ```python
 @torch.no_grad()
@@ -186,21 +169,11 @@ def _to_fp8(x, fp8_dtype):
     return x_fp8, inv_scale
 ```
 
-- 计算使用 `torch._scale_mm()`, 在前向/反向传播的计算过程中，第一个参数要求数据内存是行连续（row-major），而第二个参数要求内存是列连续（col-major）. 在反向传播的计算过程中，这里用到张量tensor的转置 `.t()`，重写分配连续内存`contiguous()`两个方法。
+`torch._scaled_mm` 要求第一个操作数行连续、第二个列连续。反向里权重要先 _to_col_major（转置后再 contiguous），再乘：
 
 ```python
-@torch._dynamo.allow_in_graph
-class _Float8Matmul(torch.autograd.Function):
-    @staticmethod
-    def backward(ctx, grad_output):
-        # === 矩阵乘法 1: grad_input = grad_output @ weight ===
-        # Shapes: [B, N] @ [N, K] -> [B, K]
-        # 梯度使用 e5m2 (更大区间), 权重使用 e4m3 (更高精度)
-        go_fp8, go_inv = _to_fp8(grad_output, torch.float8_e5m2)
-        # go_fp8  [B, N] 在内存中是行连续, 适配_scaled_mm()的第一个参数要求
-        # w_fp8 [N, K] 在内存中是行连续，需要转为列连续的方式，适配_scaled_mm()的第二个参数要求
-        w_col = _to_col_major(w_fp8)
-        grad_input = torch._scaled_mm(...)
+w_col = _to_col_major(w_fp8)
+grad_input = torch._scaled_mm(...)
 ```
 
 ## References
