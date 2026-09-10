@@ -6,16 +6,18 @@ Flash Attention是一种加速attention计算的技术。FA仅仅支持BF16/FP8�
 
 使用现成已编译完成的文件来完成attention计算。因为FlashAttention编译对环境要求极高。所以预先编译好，可以避免本地编译的各种问题。在 [Kernels](https://huggingface.co/kernels)中有已经编译完成的kernel，类似`varunneal/flash-attention-3`, `kernels-community/flash-attn3`. 
 
-### 实际用法
+## 环境要求
 
-环境应该使用 bf6/fp8 数据格式。
+- 环境应该使用 bf6/fp8 数据格式
+- FA3 kernels 目前支持 Hopper (sm90), Ada (sm89) and Ampere (sm80/sm86)
+
+### 实际用法
 
 代码主要在 `nanochat/flash_attention.py`中。用法类似:
 
 ```python
 def _load_flash_attention_3():
     major, _ = torch.cuda.get_device_capability()
-    # FA3 kernels 目前支持 Hopper (sm90), Ada (sm89) and Ampere (sm80/sm86)
     if major == 9:
         hf_kernel = "varunneal/flash-attention-3"
         # 下载线上的 FA3 算子
