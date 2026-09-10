@@ -18,7 +18,7 @@
 
 ### 案例总结
 
-在处理 **1M（$10^6$）Tokens** 的超长上下文场景中：
+在处理 **1M**（$10^6$）Tokens 的超长上下文场景中：
 * **全量注意力（Full Attention）：** 点积矩阵规模为 $N^2 = (10^6)^2 = \mathbf{10^{12}}$，无论在预填充（Prefill）阶段的 FLOPs 还是解码（Decode）阶段的 KV Cache 显存占用，都会成为瓶颈。
 * **滑动窗口注意力（Sliding Window Attention）：** 若设置窗口大小 $W = 4096 \approx 4 \times 10^3$（如 Mistral 或 Qwen 早期长文本所用配置），每个 Token 仅与局部前 $W$ 个 Token 交互，计算规模降为 $N \times W \approx 10^6 \times 4096 \approx \mathbf{4 \times 10^9}$，计算量相比全注意力直接下降了 **两个数量级以上（约 250 倍）**。
 * **推理优势：** 解码阶段不再需要线性增长的全局 [KV Cache](KVCache.md)，可采用 **循环缓冲区（Ring Buffer）** 只保留最近 $W$ 个 Token，彻底消除了超长对话中显存溢出 OOM 的问题。注意，循环缓冲区不是nanochat的实现方式。 
