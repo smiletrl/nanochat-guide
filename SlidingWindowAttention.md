@@ -45,7 +45,7 @@ python -m scripts.base_train \
 
 2. 预先计算每层的窗口长度
 
-L 注意力则是全部的sequence 长度。S 局部注意力，计算把全部上下文的 1/4 作为短窗口大小，然后向上取整到 128 的整数倍。然后每层依次按照窗口模式，配置该层选 S 还是选 L。
+L 注意力则是全部的sequence 长度。S 局部注意力，计算把全部上下文的 1/4 作为短窗口大小，然后向上取整到 128 的整数倍。比如`max-seq-len=512`, 那么 S 为 128。接下来每层依次按照窗口模式，配置该层选 S 还是选 L。
 
 `nanochat/gpt.py` 中的实现见
 
@@ -79,4 +79,45 @@ class Block(nn.Module):
 
 FA3的实现在接口内部，不在nanochat的实现范围内。调用方法类似 `_fa3.flash_attn_func(q, k, v, causal=causal, window_size=window_size)`。
 
-SDPA 的实现方式，虽然工程实践中不会用于工业生产环境，但是可以帮助我们理解滑动窗口的具体用途。调用详情见 `def _sdpa_attention()`
+SDPA 的实现方式虽然在生产环境中效率不如原生算子，但非常直观地展示了滑动窗口的数学本质。
+
+在因果注意力（Causal Attention）中，由于只能看过去和当前的 token（即列索引 $\le$ 行索引），允许计算的有效区域实际是**下三角矩阵**（右上角的未来 token 被遮蔽为 0）。
+
+以序列长度 $T=6$ 为例，其中行表示当前 Query 的 Token 绝对位置，列表示目标 Key 的 Token 绝对位置。
+
+```text
+       K0  K1  K2  K3  K4  K5
+Q0 [   1   0   0   0   0   0  ]
+Q1 [   1   1   0   0   0   0  ]
+Q2 [   1   1   1   0   0   0  ]
+Q3 [   1   1   1   1   0   0  ]
+Q4 [   1   1   1   1   1   0  ]
+Q5 [   1   1   1   1   1   1  ]
+```
+
+加了滑动窗口（如设置窗口大小 `window = 2`）后，每个 Token 最多只能看自己以及前 2 个 Token，超出窗口太久远的历史信息（矩阵左下角）也被遮蔽为 `0`，掩码矩阵收缩为一条**沿主对角线的斜带状矩阵（Band Matrix）**：
+
+```text
+       K0  K1  K2  K3  K4  K5
+Q0 [   1   0   0   0   0   0  ]
+Q1 [   1   1   0   0   0   0  ]
+Q2 [   1   1   1   0   0   0  ]
+Q3 [   0   1   1   1   0   0  ]   <- Q3 丢失了对 K0 的关注
+Q4 [   0   0   1   1   1   0  ]   <- Q4 只能看到 [K2, K3, K4]
+Q5 [   0   0   0   1   1   1  ]   <- Q5 只能看到 [K3, K4, K5]
+```
+
+对应实现见 `nanochat/flash_attention.py` 中的 `def _sdpa_attention()`：
+
+```python
+def _sdpa_attention(q, k, v, window_size, enable_gqa):
+  # 1. 构造标准下三角因果掩码 (保留自己及历史 Token，右上角未来置 False)
+  row_idx = (Tk - Tq) + torch.arange(Tq, device=device).unsqueeze(1)
+  col_idx = torch.arange(Tk, device=device).unsqueeze(0)
+  mask = col_idx <= row_idx
+
+  # 2. 考虑滑动窗口截取 (左侧超出窗口大小的历史 Token 置 False)
+  if window >= 0 and window < Tk:
+      mask = mask & ((row_idx - col_idx) <= window)
+  return F.scaled_dot_product_attention(q, k, v, attn_mask=mask, enable_gqa=enable_gqa)
+```
