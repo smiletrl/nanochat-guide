@@ -121,3 +121,21 @@ def _sdpa_attention(q, k, v, window_size, enable_gqa):
       mask = mask & ((row_idx - col_idx) <= window)
   return F.scaled_dot_product_attention(q, k, v, attn_mask=mask, enable_gqa=enable_gqa)
 ```
+
+4. 单步解码（Decode）的缓存截取
+
+滑动窗口在推理时主要体现在算子层面的计算量截断与读带宽节省（Compute & Memory Bandwidth Bound）：
+
+```python
+def _sdpa_attention(q, k, v, window_size, enable_gqa):
+  # Single token generation (单 token 解码阶段)
+  if Tq == 1:
+      if window >= 0 and window < Tk:
+          # 只截取最后 (window + 1) 个 key 和 value，更早的直接切片抛弃
+          start = max(0, Tk - (window + 1))
+          k = k[:, :, start:, :]
+          v = v[:, :, start:, :]
+      return F.scaled_dot_product_attention(q, k, v, is_causal=False, enable_gqa=enable_gqa)
+```
+
+**注意：** 这里的SDPA+滑动窗口，事实上没有加速，反而在底层让GPU性能变差。这里我们的讨论仅仅是理解滑动窗口的实现。
