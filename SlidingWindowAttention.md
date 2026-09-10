@@ -43,7 +43,7 @@ python -m scripts.base_train \
   --window-pattern=SSL
 ```
 
-注意，滑动窗口注意力（SWA）应该跟 Flash Attention v3 一起使用。如果环境不支持 FA3，那么SWA会回退到默认的缩放点积注意力（Scaled Dot-Product Attention - SDPA） 注意力计算模式。这种模式实际不支持 SWA。内存跟计算没有提升。
+注意，滑动窗口注意力（SWA）应该跟 Flash Attention v3 一起使用。如果环境不支持 FA3，那么SWA会回退到默认的缩放点积注意力（Scaled Dot-Product Attention - SDPA） 注意力计算模式。
 
 2. 预先计算每层的窗口长度
 
