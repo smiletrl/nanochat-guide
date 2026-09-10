@@ -2,21 +2,31 @@
 
 Flash Attention是一种加速attention计算的技术。FA仅仅支持BF16/FP8两种数据计算格式。
 
-在nanochat中，FlashAttention的实现是专门针对 v3，使用现成已编译完成的文件来完成attention计算。因为FlashAttention编译对环境要求极高。所以预先编译好，可以避免本地编译的各种问题。在 [Kernels](https://huggingface.co/kernels)中有已经编译完成的kernel，类似`varunneal/flash-attention-3`, `kernels-community/flash-attn3`. 
+在nanochat中，FlashAttention的实现是专门针对 V3。
+
+使用现成已编译完成的文件来完成attention计算。因为FlashAttention编译对环境要求极高。所以预先编译好，可以避免本地编译的各种问题。在 [Kernels](https://huggingface.co/kernels)中有已经编译完成的kernel，类似`varunneal/flash-attention-3`, `kernels-community/flash-attn3`. 
+
+### 实际用法
+
+环境应该使用 bf6/fp8 数据格式。
 
 代码主要在 `nanochat/flash_attention.py`中。用法类似:
 
 ```python
 def _load_flash_attention_3():
-    """Try to load Flash Attention 3."""
-    from kernels import get_kernel, has_kernel
-
-    flashAttn = None
-
-    hf_kernel = "kernels-community/flash-attn3"
-    if has_kernel(hf_kernel):
-        # 下载已经预先编译好的文件到本地
-        flashAttn = get_kernel(hf_kernel).flash_attn_interface
+    major, _ = torch.cuda.get_device_capability()
+    # FA3 kernels 目前支持 Hopper (sm90), Ada (sm89) and Ampere (sm80/sm86)
+    if major == 9:
+        hf_kernel = "varunneal/flash-attention-3"
+        # 下载线上的 FA3 算子
+        return get_kernel(hf_kernel).flash_attn_interface
+    else:
+        hf_kernel = "kernels-community/flash-attn3"
+        if has_kernel(hf_kernel):
+            # 下载线上的 FA3 算子
+            return get_kernel(hf_kernel).flash_attn_interface
+        else:
+            return None
 
 _fa3 = _load_flash_attention_3()
 
