@@ -1,8 +1,8 @@
 # 滑动窗口注意力
 
-滑动窗口注意力（Sliding Window Attention）用在 [Flash Attention V3](FlashAttentionV3.md) 中，将注意力计算的复杂度从 $O(N^2)$ 降到 $O(N*W)$ 。极大降低显存占用，提高大模型训练跟推理速度。
+滑动窗口注意力（Sliding Window Attention）是一种 注意力模式：每个 token 只和自己附近一段历史做注意力，而不是和整段上下文。复杂度从 $O(N^2)$ 降到约 $O(N⋅W)$ 。
 
-在如下具体百万token上下文的案例中，KV 缓存的 **显存占用下降 99.6%**。
+在下面的具体百万token上下文的案例中，KV 缓存理论上 **显存占用下降 99.6%**。
 
 ### 具体案例数据对比
 
@@ -21,7 +21,7 @@
 在处理 **1M（$10^6$）Tokens** 的超长上下文场景中：
 * **全量注意力（Full Attention）：** 点积矩阵规模为 $N^2 = (10^6)^2 = \mathbf{10^{12}}$，无论在预填充（Prefill）阶段的 FLOPs 还是解码（Decode）阶段的 KV Cache 显存占用，都会成为瓶颈。
 * **滑动窗口注意力（Sliding Window Attention）：** 若设置窗口大小 $W = 4096 \approx 4 \times 10^3$（如 Mistral 或 Qwen 早期长文本所用配置），每个 Token 仅与局部前 $W$ 个 Token 交互，计算规模降为 $N \times W \approx 10^6 \times 4096 \approx \mathbf{4 \times 10^9}$，计算量相比全注意力直接下降了 **两个数量级以上（约 250 倍）**。
-* **推理优势：** 解码阶段不再需要线性增长的全局 [KV Cache](KVCache.md)，可采用 **循环缓冲区（Ring Buffer）** 只保留最近 $W$ 个 Token，彻底消除了超长对话中显存溢出 OOM 的问题。 
+* **推理优势：** 解码阶段不再需要线性增长的全局 [KV Cache](KVCache.md)，可采用 **循环缓冲区（Ring Buffer）** 只保留最近 $W$ 个 Token，彻底消除了超长对话中显存溢出 OOM 的问题。注意，循环缓冲区不是nanochat的实现方式。 
 
 *(注：在主流开源模型中，如 Mistral-7B 首次大范围推广了 $W=4096$ 的 SWA；而在 Qwen / DeepSeek 的超长上下文架构中，通常会采用**混合策略**——底层使用滑动窗口截断低频长距离依赖，顶层或部分特定层保留全注意力，以在保持 $O(N \cdot W)$ 整体吞吐优势的同时不损失全局检索能力。)*
 
@@ -34,6 +34,8 @@
 这个配置模式，对应了大模型中的模块层。比如默认的 `SSSL`, 表示模型从1-3层采用 S 模式，第4层采用 L 模式。第5-7层继续采用 S 模式，第8层采用 L 模式。依次顺延。
 
 实践中，大模型最后一层固定采用 L 模式，无论这里的参数配置如何。
+
+混合 S/L 的意义：多数层局部、隔几层（以及最后一层）全注意力，用来补长距离，和 Gemma/Mistral-style hybrid 同一思路。nanochat 并不是每层都 SWA。
 
 ```bash
 python -m scripts.base_train \
